@@ -1,5 +1,6 @@
 
 using Microsoft.EntityFrameworkCore;
+using System.ComponentModel;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddDbContext<FetchDb>(opt => opt.UseInMemoryDatabase("RewardsPoints"));
@@ -11,9 +12,12 @@ app.MapGet("/", () => "Fetch Rewards Challenge");
 app.MapGet("/rewards", async (FetchDb db) =>
     await db.Rewards.ToListAsync());
 
+app.MapGet("/rewards/balance", (FetchDb db) =>
+    Transaction.Balance(db));
 
-//app.MapGet("/rewards/points", (FetchDb db) =>
-//    Transaction.GetPoints(db));
+
+app.MapPost("/rewards/points", (FetchDb db, Reward reward) =>
+    Transaction.PostPoints(db,reward));
 
 app.MapPost("/rewards/spend/", (FetchDb db, Spent p) =>
    Transaction.Spend(db, p));
@@ -24,27 +28,20 @@ app.MapGet("/rewards/{id}", async (int id, FetchDb db) =>
             ? Results.Ok(reward)
             : Results.NotFound());
 
-app.MapPost("/rewards", async (Reward reward, FetchDb db) =>
-{
-    db.Rewards.Add(reward);
-    await db.SaveChangesAsync();
 
-    return Results.Created($"/rewards/{reward.Id}", reward);
-});
+//app.MapPut("/rewards/{id}", async (int id, Reward inputReward, FetchDb db) =>
+//{
+//    var reward = await db.Rewards.FindAsync(id);
 
-app.MapPut("/rewards/{id}", async (int id, Reward inputReward, FetchDb db) =>
-{
-    var reward = await db.Rewards.FindAsync(id);
+//    if (reward is null) return Results.NotFound();
 
-    if (reward is null) return Results.NotFound();
+//    reward.Payer = inputReward.Payer;
+//    reward.Points = inputReward.Points;
 
-    reward.Payer = inputReward.Payer;
-    reward.Points = inputReward.Points;
+//    await db.SaveChangesAsync();
 
-    await db.SaveChangesAsync();
-
-    return Results.NoContent();
-});
+//    return Results.NoContent();
+//});
 
 app.MapDelete("/rewards/{id}", async (int id, FetchDb db) =>
 {
@@ -92,12 +89,23 @@ public class Spent
     
 }
 
+public class BalanceOutput
+{
+    
+    public string? Payer { get; set; }
+    public int Points { get; set; }
+
+    
+}
+
+
+
 
 
 
 class Transaction
 {
-    public static List<Reward> GetPoints(FetchDb db, Reward reward)
+    public static List<Reward> PostPoints(FetchDb db, Reward reward)
     {
           var query = from rewards in db.Rewards
                       where rewards.Id > 0 && rewards.Points != 0
@@ -106,17 +114,87 @@ class Transaction
                       select rewards;
          
         List<Reward> rewardList = query.ToList();
-   
-        if (reward.Points < 0)
+        
+     int posPoints = reward.Points;
+            int subPoints = posPoints;
+        if (subPoints < 0 && rewardList != null)
         {
-            Reward firstReward = rewardList.First();
+            List<Reward> result = new List<Reward>();   
+          
+            foreach (var item in rewardList)
+            {
+                Reward firstReward = item;
 
-            //update oldest reward points
-            firstReward.Points = firstReward.Points - reward.Points;
+                //update oldest reward points
+                
+                firstReward.Id = item.Id;
+                firstReward.Payer = item.Payer;
+                firstReward.Points = item.Points;
+                firstReward.Timestamp = item.Timestamp;
+
+                 int currentPoints = item.Points;
+                int hold = 0;
+
+                if (currentPoints != 0 && subPoints!<=0)
+                {
+                    subPoints = currentPoints - Math.Abs(subPoints);
+
+                    if (subPoints >= 0)
+                    {
+                        hold = subPoints;
+                       
+                        firstReward.Points = hold;
+
+                        db.Attach(firstReward);
+                       
+
+                    }
+                    else
+                    {
+                        hold = 0;
+                        firstReward.Points = hold;
+                        db.Remove(firstReward);
+                    }
+                }
+             
+                
+
+            }
+           
+
+           
+            
         }
+        else
+        {
+
+            db.Rewards.Add(reward);
             
 
-        return rewardList;
+        }
+        if(subPoints < 0)
+        {
+            var error = new List<Reward>();
+
+            Reward reward1 = new Reward();
+
+            reward1.Payer = "Invalid Amount";
+            reward1.Points = subPoints;
+            error.Add(reward1);
+
+            
+
+            return error;
+        }
+        else
+        {
+            db.SaveChanges();
+        }
+
+        
+        var newQuery = query.ToList();
+
+        return newQuery;
 
 
 
@@ -154,9 +232,11 @@ class Transaction
                 if (sub >= 0)
                 {
                 difference = -holder;
+
                     tempReward.Points = difference;
                     result.Add(tempReward);
                     item.Points = 0;
+                    db.Attach(item);
                 }
                 else
                 {
@@ -166,15 +246,16 @@ class Transaction
                     }
 
                     difference = item.Points - Math.Abs(sub);
-                    //difference = -Math.Abs(sub);
                     tempReward.Points = -Math.Abs(difference);
                     if (tempReward.Points == 0)
                     {
+                        
                         break;
                     }
                     result.Add(tempReward);
                     item.Points = Math.Abs(sub);
-                    //break;
+                    db.Attach(item);
+                    
                 }
                 
 
@@ -184,8 +265,8 @@ class Transaction
             
 
         }
-
-        if (sub > 0)
+        
+                    if (sub > 0)
             {
             List<SpentOutput> tempSpent = new List<SpentOutput>();
             SpentOutput tempReward = new SpentOutput();
@@ -196,9 +277,42 @@ class Transaction
             return tempSpent;
             }
       
-
+db.SaveChanges();
         return result;
 
+    }
+
+    public static List<BalanceOutput> Balance(FetchDb db)
+    {
+        var query = (from item in db.Rewards
+                     where item.Id > 0 && item.Points >= 0
+                     orderby item.Timestamp ascending
+                     select item);
+               
+
+        List<Reward> rewards = query.ToList();
+        List<BalanceOutput> result = new List<BalanceOutput>();
+
+        foreach (var item in rewards)
+        {
+            BalanceOutput balanceOutput = new BalanceOutput();
+
+            balanceOutput.Payer = item.Payer;
+            balanceOutput.Points = item.Points;
+
+           
+            result.Add(balanceOutput);
+            
+
+        }
+
+
+
+
+
+
+
+        return result;
     }
 
 
