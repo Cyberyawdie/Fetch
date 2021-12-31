@@ -1,16 +1,18 @@
 
 using Microsoft.EntityFrameworkCore;
-using System.ComponentModel;
+using Newtonsoft.Json;
+
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddDbContext<FetchDb>(opt => opt.UseInMemoryDatabase("RewardsPoints"));
 builder.Services.AddDatabaseDeveloperPageExceptionFilter();
 var app = builder.Build();
 
+
+
 app.MapGet("/", () => "Fetch Rewards Challenge");
 
-app.MapGet("/rewards", async (FetchDb db) =>
-    await db.Rewards.ToListAsync());
+
 
 app.MapGet("/rewards/balance", (FetchDb db) =>
     Transaction.Balance(db));
@@ -19,41 +21,13 @@ app.MapGet("/rewards/balance", (FetchDb db) =>
 app.MapPost("/rewards/points", (FetchDb db, Reward reward) =>
     Transaction.PostPoints(db,reward));
 
-app.MapPost("/rewards/spend/", (FetchDb db, Spent p) =>
+app.MapPost("/rewards/spend", (FetchDb db, Spent p) =>
    Transaction.Spend(db, p));
 
-app.MapGet("/rewards/{id}", async (int id, FetchDb db) =>
-    await db.Rewards.FindAsync(id)
-        is Reward reward
-            ? Results.Ok(reward)
-            : Results.NotFound());
 
 
-//app.MapPut("/rewards/{id}", async (int id, Reward inputReward, FetchDb db) =>
-//{
-//    var reward = await db.Rewards.FindAsync(id);
 
-//    if (reward is null) return Results.NotFound();
 
-//    reward.Payer = inputReward.Payer;
-//    reward.Points = inputReward.Points;
-
-//    await db.SaveChangesAsync();
-
-//    return Results.NoContent();
-//});
-
-app.MapDelete("/rewards/{id}", async (int id, FetchDb db) =>
-{
-    if (await db.Rewards.FindAsync(id) is Reward reward)
-    {
-        db.Rewards.Remove(reward);
-        await db.SaveChangesAsync();
-        return Results.Ok(reward);
-    }
-
-    return Results.NotFound();
-});
 
 app.Run();
 
@@ -64,7 +38,7 @@ public class Reward
     public string? Payer { get; set; }
     public int Points { get; set; }
 
-   public DateTime Timestamp { get; set; } = DateTime.UtcNow;
+   public DateTime Timestamp { get; set; }
      
       
   
@@ -89,14 +63,6 @@ public class Spent
     
 }
 
-public class BalanceOutput
-{
-    
-    public string? Payer { get; set; }
-    public int Points { get; set; }
-
-    
-}
 
 
 
@@ -105,6 +71,7 @@ public class BalanceOutput
 
 class Transaction
 {
+        //Method to add points and subtract from oldest points if a negetive point value is added
     public static List<Reward> PostPoints(FetchDb db, Reward reward)
     {
           var query = from rewards in db.Rewards
@@ -125,7 +92,7 @@ class Transaction
             {
                 Reward firstReward = item;
 
-                //update oldest reward points
+                
                 
                 firstReward.Id = item.Id;
                 firstReward.Payer = item.Payer;
@@ -156,6 +123,7 @@ class Transaction
                         db.Remove(firstReward);
                     }
                 }
+              
              
                 
 
@@ -192,13 +160,24 @@ class Transaction
         }
 
         
+        
         var newQuery = query.ToList();
+        foreach (var item in newQuery)
+        {
+            if (item.Points == 0)
+            {
+                db.Remove(item);
+                db.SaveChanges();
+            }
+        }
 
         return newQuery;
 
 
 
      }
+
+        //Method to calculate points spent
 
     public static List<SpentOutput> Spend(FetchDb db, Spent points)
     {
@@ -209,52 +188,52 @@ class Transaction
                     
 
         int point = points.Points;
-        int sub = point;
+        int pointsSpent = point;
        
         List<Reward> rewards = query.ToList();
         List<SpentOutput> result = new List<SpentOutput>();
-        foreach (var item in rewards)
+        foreach (var reward in rewards)
         {
-            SpentOutput tempReward = new SpentOutput();
+            SpentOutput rewardSpent = new SpentOutput();
             
-            tempReward.Payer = item.Payer;
-            tempReward.Points = item.Points;
+            rewardSpent.Payer = reward.Payer;
+            rewardSpent.Points = reward.Points;
             
 
-            int holder = item.Points;
-            int difference =0;
-            int temp = item.Points;
+            int pointsHolder = reward.Points;
+            int pointsDifference = 0;
+            int currentPoints = reward.Points;
 
-            if (temp != 0 && sub !>= 0)
+            if (currentPoints != 0 && pointsSpent !>= 0)
             {
-                sub = sub - temp;
+                pointsSpent = pointsSpent - currentPoints;
                
-                if (sub >= 0)
+                if (pointsSpent >= 0)
                 {
-                difference = -holder;
+                pointsDifference = -pointsHolder;
 
-                    tempReward.Points = difference;
-                    result.Add(tempReward);
-                    item.Points = 0;
-                    db.Attach(item);
+                    rewardSpent.Points = pointsDifference;
+                    result.Add(rewardSpent);
+                    reward.Points = 0;
+                    db.Attach(reward);
                 }
                 else
                 {
-                    if (sub > 0)
+                    if (pointsSpent > 0)
                     {
                         break;
                     }
 
-                    difference = item.Points - Math.Abs(sub);
-                    tempReward.Points = -Math.Abs(difference);
-                    if (tempReward.Points == 0)
+                    pointsDifference = reward.Points - Math.Abs(pointsSpent);
+                    rewardSpent.Points = -Math.Abs(pointsDifference);
+                    if (rewardSpent.Points == 0)
                     {
                         
                         break;
                     }
-                    result.Add(tempReward);
-                    item.Points = Math.Abs(sub);
-                    db.Attach(item);
+                    result.Add(rewardSpent);
+                    reward.Points = Math.Abs(pointsSpent);
+                    db.Attach(reward);
                     
                 }
                 
@@ -266,15 +245,15 @@ class Transaction
 
         }
         
-                    if (sub > 0)
+                    if (pointsSpent > 0)
             {
-            List<SpentOutput> tempSpent = new List<SpentOutput>();
+            List<SpentOutput> spentError = new List<SpentOutput>();
             SpentOutput tempReward = new SpentOutput();
 
             tempReward.Payer = "Sorry you need more points";
             tempReward.Points = 0;
-            tempSpent.Add(tempReward);
-            return tempSpent;
+            spentError.Add(tempReward);
+            return spentError;
             }
       
 db.SaveChanges();
@@ -282,44 +261,59 @@ db.SaveChanges();
 
     }
 
-    public static List<BalanceOutput> Balance(FetchDb db)
+  
+
+            //Method to get currrent balance
+    public static string Balance(FetchDb db)
     {
         var query = (from item in db.Rewards
-                     where item.Id > 0 && item.Points >= 0
+                     where item.Points >= 0
                      orderby item.Timestamp ascending
-                     select item);
+                      select item);
                
 
         List<Reward> rewards = query.ToList();
-        List<BalanceOutput> result = new List<BalanceOutput>();
 
-        foreach (var item in rewards)
+
+        var dict = new Dictionary<string, int>();
+      
+        foreach (var balance in rewards)
         {
-            BalanceOutput balanceOutput = new BalanceOutput();
-
-            balanceOutput.Payer = item.Payer;
-            balanceOutput.Points = item.Points;
+           
 
            
-            result.Add(balanceOutput);
-            
+
+            if (dict.ContainsKey(balance.Payer))
+            {
+                dict[balance.Payer] += balance.Points;
+            }
+            else
+            { 
+                dict.Add(balance.Payer, balance.Points);
+            }
+
+
 
         }
+        
+
+       var output =JsonConvert.SerializeObject(dict);
+       
 
 
 
 
-
-
-
-        return result;
+        return output;
+        
     }
 
 
 }
 
- 
 
+
+
+        //In Memory Data Base
 class FetchDb : DbContext
 {
     public FetchDb(DbContextOptions<FetchDb> options)
