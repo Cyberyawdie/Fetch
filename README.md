@@ -1,4 +1,4 @@
-# Fetch Rewards Code Challenge
+# Reward Points Demo
 This web service includes:
 
   1. The ability for a user to add points.
