@@ -1,28 +1,57 @@
 
 using Microsoft.EntityFrameworkCore;
+using Microsoft.OpenApi.Models;
 using Newtonsoft.Json;
-
+using Swashbuckle.AspNetCore.SwaggerGen;
+using System.Reflection;
+using System.Runtime.Serialization;
 
 var builder = WebApplication.CreateBuilder(args);
-builder.Services.AddDbContext<FetchDb>(opt => opt.UseInMemoryDatabase("RewardsPoints"));
 builder.Services.AddDatabaseDeveloperPageExceptionFilter();
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen(c =>
+{
+    c.SwaggerDoc("v1", new OpenApiInfo { Title = "Fetch API", Version = "v1" });
+    c.SchemaFilter<MySwaggerSchemaFilter>();
+});
 var app = builder.Build();
 
+// Configure the app
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI(c =>
+    {
+        c.SwaggerEndpoint("/swagger/v1/swagger.json", "Fetch API V1");
+    });
+
+    // Redirect root URL to Swagger UI
+    app.Use(async (context, next) =>
+    {
+        if (context.Request.Path == "/")
+        {
+            context.Response.Redirect("/swagger/index.html");
+            return;
+        }
+
+        await next();
+    });
+}
 
 
 app.MapGet("/", () => "Fetch Rewards Challenge");
 
 
 
-app.MapGet("/rewards/balance", (FetchDb db) =>
-    Transaction.Balance(db));
+app.MapPost("/rewards/add-points", (Reward reward) =>
+    Transaction.PostPoints(reward));
 
+app.MapPost("/rewards/spend-points", (Spent spent) =>
+   Transaction.Spend(spent));
 
-app.MapPost("/rewards/points", (FetchDb db, Reward reward) =>
-    Transaction.PostPoints(db, reward));
+app.MapGet("/rewards/points-balance", () =>
+    Transaction.Balance());
 
-app.MapPost("/rewards/spend", (FetchDb db, Spent p) =>
-   Transaction.Spend(db, p));
 
 
 
@@ -31,17 +60,40 @@ app.MapPost("/rewards/spend", (FetchDb db, Spent p) =>
 
 app.Run();
 
+public class MySwaggerSchemaFilter : ISchemaFilter
+{
+    public void Apply(OpenApiSchema schema, SchemaFilterContext context)
+    {
+        if (schema?.Properties == null)
+        {
+            return;
+        }
+
+        var ignoreDataMemberProperties = context.Type.GetProperties()
+            .Where(t => t.GetCustomAttribute<IgnoreDataMemberAttribute>() != null);
+
+        foreach (var ignoreDataMemberProperty in ignoreDataMemberProperties)
+        {
+            var propertyToHide = schema.Properties.Keys
+                .SingleOrDefault(x => x.ToLower() == ignoreDataMemberProperty.Name.ToLower());
+
+            if (propertyToHide != null)
+            {
+                schema.Properties.Remove(propertyToHide);
+            }
+        }
+    }
+}
+
 public class Reward
 {
 
-    public int Id { get; set; }
-    public string? Payer { get; set; }
+    public string Payer { get; set; }
     public int Points { get; set; }
-
-    public DateTime Timestamp { get; set; }
-
-
-
+    // Exclude Timestamp property from Swagger documentation
+    [IgnoreDataMember]
+    public DateTime Timestamp { get; set; } = DateTime.UtcNow;
+    public static Dictionary<string, Reward> RewardDict = new Dictionary<string, Reward>();
 
 
 
@@ -50,7 +102,7 @@ public class Reward
 
 public class SpentOutput
 {
-    public string? Payer { get; set; }
+    public string Payer { get; set; }
     public int Points { get; set; }
 
 
@@ -72,68 +124,12 @@ public class Spent
 class Transaction
 {
     //Method to add points and subtract from oldest points if a negetive point value is added
-    public static List<Reward> PostPoints(FetchDb db, Reward reward)
+    public static List<Reward> PostPoints(Reward reward)
     {
-        var query = from rewards in db.Rewards
-                    where rewards.Id > 0 && rewards.Points != 0
-                    orderby rewards.Timestamp ascending
 
-                    select rewards;
-
-        List<Reward> rewardList = query.ToList();
-
-        int posPoints = reward.Points;
-        int subPoints = posPoints;
-        if (subPoints < 0 && rewardList != null)
-        {
-            List<Reward> result = new List<Reward>();
-
-            foreach (var item in rewardList)
-            {
-                Reward firstReward = item;
-
-
-
-                firstReward.Id = item.Id;
-                firstReward.Payer = item.Payer;
-                firstReward.Points = item.Points;
-                firstReward.Timestamp = item.Timestamp;
-
-                int currentPoints = item.Points;
-                int hold = 0;
-
-        // If statement to check if points added is negative and subtract that value from positive points until value is 0.
-                if (currentPoints != 0 && subPoints! <= 0) 
-                {
-                    subPoints = currentPoints - Math.Abs(subPoints);
-
-                    if (subPoints >= 0)
-                    {
-                        hold = subPoints;
-
-                        firstReward.Points = hold;
-
-                        db.Attach(firstReward);
-
-
-                    }
-                    else
-                    {
-                        hold = 0;
-                        firstReward.Points = hold;
-                        db.Remove(firstReward);
-                    }
-                }
-            }
-
-        }
-        else
-        {
-
-            db.Rewards.Add(reward);
-
-
-        }
+        int subPoints = reward.Points;
+        reward.Payer = reward.Payer.ToUpper();
+      
         if (subPoints < 0)
         {
             var error = new List<Reward>();
@@ -148,21 +144,22 @@ class Transaction
 
             return error;
         }
+
+        if (Reward.RewardDict.ContainsKey(reward.Payer))
+        {
+            var rewardVal = Reward.RewardDict[reward.Payer];
+            rewardVal.Points += reward.Points;
+            rewardVal.Timestamp = reward.Timestamp > rewardVal.Timestamp ? reward.Timestamp : rewardVal.Timestamp;
+        }
         else
         {
-            db.SaveChanges();
+            Reward.RewardDict.Add(reward.Payer, reward);
         }
 
-        //Database call to show values recently added. 
-        var newQuery = query.ToList();
-        foreach (var item in newQuery)
-        {
-            if (item.Points == 0)
-            {
-                db.Remove(item);
-                db.SaveChanges();
-            }
-        }
+        
+
+        var newQuery = Reward.RewardDict.Values.ToList();
+       
 
         return newQuery;
 
@@ -171,82 +168,79 @@ class Transaction
 
     //Method to calculate points spent
 
-    public static List<SpentOutput> Spend(FetchDb db, Spent points)
+    public static List<SpentOutput> Spend(Spent points)
     {
-        var query = (from item in db.Rewards
-                     where item.Id > 0 && item.Points != 0
-                     orderby item.Timestamp ascending
-                     select item);
-
-
+        
         int point = points.Points;
-        int pointsSpent = point;
+        var totalCurrentPoints = Reward.RewardDict.Values.ToList().Sum(x => x.Points);
 
-        List<Reward> rewards = query.ToList();
+        int pointsSpent = totalCurrentPoints - point > -1 ? point : 0;
+
+        List<Reward> rewards = Reward.RewardDict.Values.OrderBy(x => x.Timestamp).ToList();
         List<SpentOutput> result = new List<SpentOutput>();
-        foreach (var reward in rewards)
+        if (pointsSpent != 0)
         {
-            SpentOutput rewardSpent = new SpentOutput();
-
-            rewardSpent.Payer = reward.Payer;
-            rewardSpent.Points = reward.Points;
-
-
-            int pointsHolder = reward.Points;
-            int pointsDifference = 0;
-            int currentPoints = reward.Points;
-
-            //This statement block subtract the points being spent from the current points available until the points spent is 0.
-            //the return value is the amount subtracted from each reward.
-            if (currentPoints != 0 && pointsSpent !>= 0)
+            foreach (var reward in rewards)
             {
-                pointsSpent = pointsSpent - currentPoints;
+                SpentOutput rewardSpent = new SpentOutput();
 
-                if (pointsSpent >= 0)
+                rewardSpent.Payer = reward.Payer;
+                rewardSpent.Points = reward.Points;
+
+
+                int pointsHolder = reward.Points;
+                int pointsDifference = 0;
+                int currentPoints = reward.Points;
+
+                //This statement block subtract the points being spent from the current points available until the points spent is 0.
+                //the return value is the amount subtracted from each reward.
+                if (currentPoints != 0 && pointsSpent! >= 0)
                 {
-                    pointsDifference = -pointsHolder;
+                    pointsSpent = pointsSpent - currentPoints;
 
-                    rewardSpent.Points = pointsDifference;
-                    result.Add(rewardSpent);
-                    reward.Points = 0;
-                    db.Attach(reward);
-                }
-                else
-                {
-                    if (pointsSpent > 0)
+                    if (pointsSpent >= 0)
                     {
-                        break;
-                    }
+                        pointsDifference = -pointsHolder;
 
-                    pointsDifference = reward.Points - Math.Abs(pointsSpent);
-                    rewardSpent.Points = -Math.Abs(pointsDifference);
-                    if (rewardSpent.Points == 0)
+                        rewardSpent.Points = pointsDifference;
+                        result.Add(rewardSpent);
+                        reward.Points = 0;
+                        if (reward.Points == 0)
+                            Reward.RewardDict.Remove(reward.Payer);
+                    }
+                    else
                     {
+                        if (pointsSpent > 0)
+                        {
+                            break;
+                        }
 
-                        break;
+                        pointsDifference = reward.Points - Math.Abs(pointsSpent);
+                        rewardSpent.Points = -Math.Abs(pointsDifference);
+                        if (rewardSpent.Points == 0)
+                        {                            
+                            break;
+                        }
+                        result.Add(rewardSpent);
+                        reward.Points = Math.Abs(pointsSpent);
+                       
                     }
-                    result.Add(rewardSpent);
-                    reward.Points = Math.Abs(pointsSpent);
-                    db.Attach(reward);
 
                 }
 
             }
-
         }
-
-        if (pointsSpent > 0)
+        else
         {
             List<SpentOutput> spentError = new List<SpentOutput>();
             SpentOutput tempReward = new SpentOutput();
 
-            tempReward.Payer = "Sorry you need more points";
-            tempReward.Points = 0;
+            tempReward.Payer = "Sorry you do not have sufficient points for this transaction";
+            tempReward.Points = totalCurrentPoints;
             spentError.Add(tempReward);
             return spentError;
         }
 
-        db.SaveChanges();
         return result;
 
     }
@@ -254,30 +248,38 @@ class Transaction
 
 
     //Method to get currrent balance
-    public static string Balance(FetchDb db)
+    public static string Balance()
     {
-        var query = (from item in db.Rewards
-                     where item.Points >= 0
-                     orderby item.Timestamp ascending
-                     select item);
 
 
-        List<Reward> rewards = query.ToList();
+        var rewards = Reward.RewardDict.Values.ToList();
 
 
         var dict = new Dictionary<string, int>();
-
-        foreach (var balance in rewards)
+        var total = 0;
+        if (rewards.Count > 0)
         {
+            foreach (var balance in rewards)
+            {
 
-            if (dict.ContainsKey(balance.Payer))
-            {
-                dict[balance.Payer] += balance.Points;
+                if (dict.ContainsKey(balance.Payer))
+                {
+                    dict[balance.Payer] += balance.Points;
+                }
+                else
+                {
+                    dict.Add(balance.Payer, balance.Points);
+                }
+
             }
-            else
-            {
-                dict.Add(balance.Payer, balance.Points);
-            }
+
+            total = dict.Values.Sum(x => x);
+            dict.Add("TOTAL POINTS", total);
+
+        }
+        else
+        {
+            dict.Add("TOTAL POINTS", total);
 
         }
 
@@ -293,14 +295,5 @@ class Transaction
 
 
 
-//In Memory Data Base
-class FetchDb : DbContext
-{
-    public FetchDb(DbContextOptions<FetchDb> options)
-        : base(options) { }
 
-    public DbSet<Reward> Rewards => Set<Reward>();
-
-
-}
 
