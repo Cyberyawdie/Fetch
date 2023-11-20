@@ -1,43 +1,41 @@
 # Reward Points Demo
 This web service includes:
 
-  1. The ability for a user to add points.
+  1. The ability for a payer to add points.
 
 2. The ability for a user to spend points and check balances.
 
-This project was created in C# using a Minimal API and in-memory database to simulate CRUD operations.
-To keep this project simple and to maintain code clarity, the code used for all the processes is located in the program.cs file.
+This project was created in C# using a Minimal API to simulate a simple rewards points API operations.
+To keep this project simple, the code used for all the processes is located in the program.cs file.
 
 <h3>Prerequisites</h3>
 
-* Visual Studio Community 2022 with ASP.NET and web development, .NET 6.0 and Entity Framework
-* Postman
+* Visual Studio Community 2022 with ASP.NET and web development, and .NET 6.0
+* Swagger
 
 ### API Endpoints ###
 
 ##### ADD POINTS
 
- POST  `/rewards/points`
+ POST  `/rewards/add-points`
  
- Sample rewards you can use in Postman to test this project. 
+ Sample rewards you can use to test this project. 
  
-* `{ "payer": "DANNON", "points": 1000, "timestamp": "2020-11-02T14:00:00Z" }`
+* `{ "payer": "DANNON", "points": 1000}`
 
-* `{ "payer": "UNILEVER", "points": 200, "timestamp": "2020-10-31T11:00:00Z" }` 
+* `{ "payer": "UNILEVER", "points": 200}` 
  
-* `{ "payer": "MILLER COORS", "points": 10000, "timestamp": "2020-11-01T14:00:00Z" }`
+* `{ "payer": "MILLER COORS", "points": 10000}`
  
-* `{ "payer": "DANNON", "points": 300, "timestamp": "2020-10-31T10:00:00Z" }`
-
-* `{ "payer": "DANNON", "points": -200, "timestamp": "2020-10-31T15:00:00Z" }`
+* `{ "payer": "DANNON", "points": 300}`
 
 
 
 ##### SPEND POINTS
 
-POST   `/rewards/spend`
+POST   `/rewards/spend-points`
 
-Sample spend points you can use in Postman to test this project.
+Sample points you can spend to test this project. Points get redeemed from the oldest payer first. If you try to redeem more then your total points in your account, your transaction will not be processed.
 
 * `{ "points": 5000 }`
 
@@ -45,6 +43,6 @@ Sample spend points you can use in Postman to test this project.
 
 ##### BALANCE
 
-GET   `/rewards/spend`  
+GET   `/rewards/points-balance`  
 
-Send a GET request to this endpoint to see your remainding balance from each payer.
+Send a request to see your remainding balance from each payer and total points.
